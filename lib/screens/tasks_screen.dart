@@ -118,44 +118,74 @@ class _TasksScreenState extends State<TasksScreen> with SingleTickerProviderStat
     );
   }
 
+  Future<void> _delete(Map<String, dynamic> task) async {
+    final id = task['id'];
+    setState(() => _tasks.removeWhere((t) => (t as Map)['id'] == id));
+    try { await ApiService.delete('/tasks/$id'); }
+    catch (_) { if (mounted) _load(); }
+  }
+
   Widget _taskCard(Map<String, dynamic> t) {
     final done = t['completed'] == true;
     final due = t['due_date'] as String?;
     final isOverdue = !done && due != null && due.compareTo(_todayStr()) < 0;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: Checkbox(
-          value: done,
-          onChanged: (_) => _toggle(t),
-          activeColor: const Color(0xFF3a6b35),
+    return Dismissible(
+      key: ValueKey('task_${t['id']}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: Colors.red.shade400,
+          borderRadius: BorderRadius.circular(12),
         ),
-        title: Text(
-          t['title'] ?? 'Task',
-          style: TextStyle(
-            decoration: done ? TextDecoration.lineThrough : null,
-            color: done ? Colors.grey : null,
-            fontWeight: FontWeight.w500,
+        child: const Icon(Icons.delete_outline, color: Colors.white, size: 22),
+      ),
+      onDismissed: (_) => _delete(t),
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        child: ListTile(
+          leading: Checkbox(
+            value: done,
+            onChanged: (_) => _toggle(t),
+            activeColor: const Color(0xFF3a6b35),
           ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (due != null)
-              Text(
-                'Due: $due',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isOverdue ? Colors.red : Colors.grey,
-                  fontWeight: isOverdue ? FontWeight.w600 : FontWeight.normal,
+          title: Text(
+            t['title'] ?? 'Task',
+            style: TextStyle(
+              decoration: done ? TextDecoration.lineThrough : null,
+              color: done ? Colors.grey : null,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (due != null)
+                Text(
+                  'Due: $due',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isOverdue ? Colors.red : Colors.grey,
+                    fontWeight: isOverdue ? FontWeight.w600 : FontWeight.normal,
+                  ),
                 ),
-              ),
-            if (t['notes'] != null && (t['notes'] as String).isNotEmpty)
-              Text(t['notes'], style: const TextStyle(fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
-          ],
+              if (t['notes'] != null && (t['notes'] as String).isNotEmpty)
+                Text(t['notes'], style: const TextStyle(fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
+            ],
+          ),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            _priorityChip(t['priority'] ?? 'normal'),
+            IconButton(
+              icon: const Icon(Icons.edit_outlined, size: 18, color: Colors.grey),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => TaskFormScreen(task: t, onSaved: _load),
+              )),
+            ),
+          ]),
+          isThreeLine: due != null,
         ),
-        trailing: _priorityChip(t['priority'] ?? 'normal'),
-        isThreeLine: due != null,
       ),
     );
   }
@@ -194,8 +224,9 @@ class _TasksScreenState extends State<TasksScreen> with SingleTickerProviderStat
 // ── Task Form ─────────────────────────────────────────────────────────────────
 
 class TaskFormScreen extends StatefulWidget {
+  final Map<String, dynamic>? task;
   final VoidCallback onSaved;
-  const TaskFormScreen({super.key, required this.onSaved});
+  const TaskFormScreen({super.key, this.task, required this.onSaved});
 
   @override
   State<TaskFormScreen> createState() => _TaskFormScreenState();
@@ -203,11 +234,23 @@ class TaskFormScreen extends StatefulWidget {
 
 class _TaskFormScreenState extends State<TaskFormScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _titleCtrl = TextEditingController();
-  final _notesCtrl = TextEditingController();
-  String _priority = 'normal';
+  late final TextEditingController _titleCtrl;
+  late final TextEditingController _notesCtrl;
+  late String _priority;
   DateTime? _dueDate;
   bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final t = widget.task;
+    _titleCtrl = TextEditingController(text: t?['title'] ?? '');
+    _notesCtrl = TextEditingController(text: t?['notes'] ?? '');
+    _priority = t?['priority'] ?? 'normal';
+    if (t?['due_date'] != null) {
+      _dueDate = DateTime.tryParse(t!['due_date']);
+    }
+  }
 
   @override
   void dispose() {
@@ -219,7 +262,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     final d = await showDatePicker(
       context: context,
       initialDate: _dueDate ?? DateTime.now(),
-      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
       lastDate: DateTime.now().add(const Duration(days: 365)),
     );
     if (d != null) setState(() => _dueDate = d);
@@ -231,12 +274,16 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     final body = {
       'title': _titleCtrl.text.trim(),
       'priority': _priority,
-      if (_notesCtrl.text.trim().isNotEmpty) 'notes': _notesCtrl.text.trim(),
+      'notes': _notesCtrl.text.trim(),
       if (_dueDate != null)
         'due_date': '${_dueDate!.year}-${_dueDate!.month.toString().padLeft(2,'0')}-${_dueDate!.day.toString().padLeft(2,'0')}',
     };
     try {
-      await ApiService.post('/tasks/', body);
+      if (widget.task != null) {
+        await ApiService.put('/tasks/${widget.task!['id']}', body);
+      } else {
+        await ApiService.post('/tasks/', body);
+      }
       if (!mounted) return;
       widget.onSaved();
       Navigator.of(context).pop();
@@ -252,8 +299,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isEdit = widget.task != null;
     return Scaffold(
-      appBar: AppBar(title: const Text('New Task')),
+      appBar: AppBar(title: Text(isEdit ? 'Edit Task' : 'New Task')),
       body: Form(
         key: _formKey,
         child: ListView(
@@ -299,7 +347,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
               child: _saving
                   ? const SizedBox(height: 20, width: 20,
                       child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('Create Task'),
+                  : Text(isEdit ? 'Save Changes' : 'Create Task'),
             ),
           ],
         ),

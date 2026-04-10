@@ -11,6 +11,7 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   Map<String, dynamic>? _stats;
   List<dynamic> _alerts = [];
+  List<dynamic> _dueTasks = [];
   bool _loading = true;
   String? _error;
 
@@ -26,17 +27,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final results = await Future.wait([
         ApiService.get('/dashboard/stats'),
         ApiService.get('/dashboard/alerts'),
+        ApiService.get('/tasks/'),
       ]);
       if (!mounted) return;
-      final statsRaw = results[0];
-      final alertsRaw = results[1];
+      final today = _todayStr();
       setState(() {
-        _stats = statsRaw is Map<String, dynamic> ? statsRaw : {};
-        _alerts = alertsRaw is List ? alertsRaw : [];
+        _stats = results[0] is Map<String, dynamic> ? results[0] as Map<String, dynamic> : {};
+        _alerts = results[1] is List ? results[1] as List : [];
+        final allTasks = results[2] is List ? results[2] as List : [];
+        _dueTasks = allTasks.where((t) {
+          if (t['completed'] == true) return false;
+          final due = t['due_date'] as String?;
+          return due == null || due.compareTo(today) <= 0;
+        }).toList();
         _loading = false;
       });
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = e.toString(); });
+    }
+  }
+
+  String _todayStr() {
+    final d = DateTime.now();
+    return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
+  }
+
+  Future<void> _toggleTask(Map<String, dynamic> task) async {
+    final newVal = !(task['completed'] == true);
+    setState(() => task['completed'] = newVal);
+    try {
+      await ApiService.patch('/tasks/${task['id']}/complete', {'completed': newVal});
+      if (mounted) _load();
+    } catch (_) {
+      if (mounted) setState(() => task['completed'] = !newVal);
     }
   }
 
@@ -59,8 +82,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     padding: const EdgeInsets.all(16),
                     children: [
                       if (_stats != null) _statsGrid(),
-                      const SizedBox(height: 16),
+                      if (_dueTasks.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            _sectionHeader('Due & Overdue Tasks'),
+                            Text('${_dueTasks.length} pending',
+                              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        ..._dueTasks.take(5).map(_dueTaskRow),
+                        if (_dueTasks.length > 5)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text('+${_dueTasks.length - 5} more — check Tasks tab',
+                              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          ),
+                      ],
                       if (_alerts.isNotEmpty) ...[
+                        const SizedBox(height: 20),
                         _sectionHeader('Alerts'),
                         const SizedBox(height: 8),
                         ..._alerts.map(_alertCard),
@@ -124,7 +166,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
   );
 
   Widget _sectionHeader(String title) => Text(title,
-    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold));
+    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold));
+
+  Widget _dueTaskRow(dynamic task) {
+    final t = task as Map<String, dynamic>;
+    final due = t['due_date'] as String?;
+    final today = _todayStr();
+    final isOverdue = due != null && due.compareTo(today) < 0;
+    final priority = t['priority'] ?? 'normal';
+    final priorityColor = priority == 'high' ? Colors.red
+        : priority == 'medium' ? Colors.orange
+        : null;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 6),
+      child: ListTile(
+        dense: true,
+        leading: Checkbox(
+          value: t['completed'] == true,
+          onChanged: (_) => _toggleTask(t),
+          activeColor: const Color(0xFF3a6b35),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        title: Text(t['title'] ?? 'Task',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: priorityColor,
+          ),
+          maxLines: 1, overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: due != null
+          ? Text(isOverdue ? 'Overdue: $due' : 'Due: $due',
+              style: TextStyle(fontSize: 11,
+                color: isOverdue ? Colors.red : Colors.grey,
+                fontWeight: isOverdue ? FontWeight.w600 : FontWeight.normal))
+          : null,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+      ),
+    );
+  }
 
   Widget _alertCard(dynamic alert) {
     final severity = alert['severity'] ?? 'info';

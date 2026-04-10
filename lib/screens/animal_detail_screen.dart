@@ -387,9 +387,34 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
     return ListView.builder(
       padding: const EdgeInsets.all(12),
       itemCount: _healthEvents.length,
-      itemBuilder: (_, i) => _healthCard(_healthEvents[i]),
+      itemBuilder: (_, i) {
+        final e = _healthEvents[i] as Map<String, dynamic>;
+        final id = e['id'];
+        return Dismissible(
+          key: ValueKey('health_$id'),
+          direction: DismissDirection.endToStart,
+          background: _deleteBg(),
+          onDismissed: (_) async {
+            setState(() => _healthEvents.removeWhere((x) => (x as Map)['id'] == id));
+            try { await ApiService.delete('/health/events/$id'); }
+            catch (_) { if (mounted) _loadHealth(); }
+          },
+          child: _healthCard(e),
+        );
+      },
     );
   }
+
+  Widget _deleteBg() => Container(
+    alignment: Alignment.centerRight,
+    padding: const EdgeInsets.only(right: 20),
+    margin: const EdgeInsets.only(bottom: 8),
+    decoration: BoxDecoration(
+      color: Colors.red.shade400,
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: const Icon(Icons.delete_outline, color: Colors.white, size: 22),
+  );
 
   Widget _healthCard(Map<String, dynamic> e) {
     final type = e['event_type']?.toString() ?? '';
@@ -488,23 +513,41 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
               ),
             ),
           ),
+        if (_weights.length >= 2) ...[
+          const SizedBox(height: 12),
+          _WeightChart(weights: _weights),
+        ],
         if (_weights.isNotEmpty) ...[
           const SizedBox(height: 12),
           const Text('Weight History',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
           const SizedBox(height: 8),
-          ..._weights.map((w) => Card(
-            margin: const EdgeInsets.only(bottom: 6),
-            child: ListTile(
-              leading: const Icon(Icons.scale_outlined, color: Color(0xFF3a6b35)),
-              title: Text('${w['weight_kg'] ?? w['weight']} ${w['weight_kg'] != null ? 'kg' : 'lbs'}',
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: w['notes'] != null && w['notes'].toString().isNotEmpty
-                  ? Text(w['notes'], style: const TextStyle(fontSize: 12)) : null,
-              trailing: Text(w['record_date']?.toString() ?? '',
-                style: const TextStyle(fontSize: 12, color: Colors.grey)),
-            ),
-          )),
+          ..._weights.map((entry) {
+            final w = entry as Map<String, dynamic>;
+            final id = w['id'];
+            return Dismissible(
+              key: ValueKey('weight_$id'),
+              direction: DismissDirection.endToStart,
+              background: _deleteBg(),
+              onDismissed: (_) async {
+                setState(() => _weights.removeWhere((x) => (x as Map)['id'] == id));
+                try { await ApiService.delete('/health/weights/$id'); }
+                catch (_) { if (mounted) _loadWeights(); }
+              },
+              child: Card(
+                margin: const EdgeInsets.only(bottom: 6),
+                child: ListTile(
+                  leading: const Icon(Icons.scale_outlined, color: Color(0xFF3a6b35)),
+                  title: Text('${w['weight_kg'] ?? w['weight']} ${w['weight_kg'] != null ? 'kg' : 'lbs'}',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: w['notes'] != null && w['notes'].toString().isNotEmpty
+                      ? Text(w['notes'], style: const TextStyle(fontSize: 12)) : null,
+                  trailing: Text(w['record_date']?.toString() ?? '',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                ),
+              ),
+            );
+          }),
         ] else if (!_loadingWeights && current == null)
           const Center(child: Padding(
             padding: EdgeInsets.only(top: 32),
@@ -1652,4 +1695,161 @@ class _QuickActionsFabState extends State<_QuickActionsFab>
       ),
     );
   }
+}
+
+// ── Weight Chart ──────────────────────────────────────────────────────────────
+
+class _WeightChart extends StatelessWidget {
+  final List<dynamic> weights;
+  const _WeightChart({required this.weights});
+
+  @override
+  Widget build(BuildContext context) {
+    final sorted = [...weights];
+    sorted.sort((a, b) {
+      final da = DateTime.tryParse((a as Map)['record_date']?.toString() ?? '') ?? DateTime(0);
+      final db = DateTime.tryParse((b as Map)['record_date']?.toString() ?? '') ?? DateTime(0);
+      return da.compareTo(db);
+    });
+
+    final values = sorted.map((w) {
+      final v = (w as Map)['weight_kg'] ?? w['weight'];
+      return (v as num?)?.toDouble() ?? 0.0;
+    }).toList();
+
+    if (values.length < 2) return const SizedBox.shrink();
+
+    final minVal = values.reduce((a, b) => a < b ? a : b);
+    final maxVal = values.reduce((a, b) => a > b ? a : b);
+    final isGain = values.last >= values.first;
+    final diff = (values.last - values.first).abs();
+    final color = isGain ? Colors.green : Colors.red;
+    final unit = (sorted.last as Map)['weight_kg'] != null ? 'kg' : 'lbs';
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Weight Trend',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                Row(children: [
+                  Icon(isGain ? Icons.trending_up : Icons.trending_down, color: color, size: 16),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${isGain ? '+' : '-'}${diff.toStringAsFixed(1)} $unit',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
+                  ),
+                ]),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 90,
+              child: CustomPaint(
+                painter: _LinePainter(values: values, minVal: minVal, maxVal: maxVal, color: color),
+                size: Size.infinite,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(_shortDate((sorted.first as Map)['record_date']),
+                  style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                Text('${values.length} records',
+                  style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                Text(_shortDate((sorted.last as Map)['record_date']),
+                  style: const TextStyle(fontSize: 10, color: Colors.grey)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _shortDate(dynamic d) {
+    try {
+      final dt = DateTime.parse(d.toString());
+      return '${dt.month}/${dt.day}/${dt.year.toString().substring(2)}';
+    } catch (_) { return ''; }
+  }
+}
+
+class _LinePainter extends CustomPainter {
+  final List<double> values;
+  final double minVal, maxVal;
+  final Color color;
+
+  const _LinePainter({required this.values, required this.minVal, required this.maxVal, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.length < 2) return;
+
+    final range = maxVal - minVal;
+    final effectiveRange = range < 0.1 ? 1.0 : range;
+    final vPad = effectiveRange * 0.2;
+
+    double xOf(int i) => i / (values.length - 1) * size.width;
+    double yOf(double v) => size.height * (1 - (v - minVal + vPad) / (effectiveRange + 2 * vPad));
+
+    // Fill under line
+    final fill = Path();
+    fill.moveTo(xOf(0), size.height);
+    for (int i = 0; i < values.length; i++) fill.lineTo(xOf(i), yOf(values[i]));
+    fill.lineTo(xOf(values.length - 1), size.height);
+    fill.close();
+    canvas.drawPath(fill, Paint()..color = color.withOpacity(0.08)..style = PaintingStyle.fill);
+
+    // Line
+    final line = Path();
+    line.moveTo(xOf(0), yOf(values[0]));
+    for (int i = 1; i < values.length; i++) line.lineTo(xOf(i), yOf(values[i]));
+    canvas.drawPath(line, Paint()
+      ..color = color
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round);
+
+    // Dots with white fill
+    final dotFill = Paint()..color = Colors.white;
+    final dotStroke = Paint()..color = color;
+    for (int i = 0; i < values.length; i++) {
+      final pt = Offset(xOf(i), yOf(values[i]));
+      canvas.drawCircle(pt, 4, dotFill);
+      canvas.drawCircle(pt, 3, dotStroke);
+    }
+
+    // Max label
+    final maxI = values.indexOf(maxVal);
+    _drawLabel(canvas, size, xOf(maxI), yOf(maxVal) - 14,
+      maxVal.toStringAsFixed(1), color);
+    // Min label (if different point)
+    final minI = values.indexOf(minVal);
+    if (minI != maxI) {
+      _drawLabel(canvas, size, xOf(minI), yOf(minVal) + 6,
+        minVal.toStringAsFixed(1), Colors.grey.shade500);
+    }
+  }
+
+  void _drawLabel(Canvas canvas, Size size, double x, double y, String text, Color color) {
+    final tp = TextPainter(
+      text: TextSpan(text: text,
+        style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w600)),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: 50);
+    final dx = (x - tp.width / 2).clamp(0.0, size.width - tp.width);
+    final dy = y.clamp(0.0, size.height - tp.height);
+    tp.paint(canvas, Offset(dx, dy));
+  }
+
+  @override
+  bool shouldRepaint(_LinePainter old) => old.values != values;
 }
