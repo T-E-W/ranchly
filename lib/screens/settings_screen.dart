@@ -12,26 +12,47 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _urlCtrl = TextEditingController();
+  final _farmNameCtrl = TextEditingController();
+  String _weightUnit = 'lbs';
   bool _saving = false;
+  bool _loaded = false;
 
   @override
   void initState() {
     super.initState();
-    ApiService.baseUrl.then((url) => _urlCtrl.text = url);
+    _loadPrefs();
+  }
+
+  Future<void> _loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final url = await ApiService.baseUrl;
+    if (!mounted) return;
+    setState(() {
+      _urlCtrl.text = url;
+      _farmNameCtrl.text = prefs.getString('farm_name') ?? '';
+      _weightUnit = prefs.getString('weight_unit') ?? 'lbs';
+      _loaded = true;
+    });
   }
 
   @override
   void dispose() {
     _urlCtrl.dispose();
+    _farmNameCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _saveUrl() async {
+  Future<void> _save() async {
     setState(() => _saving = true);
-    await ApiService.setBaseUrl(_urlCtrl.text.trim());
+    final prefs = await SharedPreferences.getInstance();
+    await Future.wait([
+      ApiService.setBaseUrl(_urlCtrl.text.trim()),
+      prefs.setString('farm_name', _farmNameCtrl.text.trim()),
+      prefs.setString('weight_unit', _weightUnit),
+    ]);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Server URL saved')));
+        const SnackBar(content: Text('Settings saved')));
       setState(() => _saving = false);
     }
   }
@@ -59,33 +80,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _clearPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Preferences cleared')));
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    if (!_loaded) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Server config
+
+          // ── Farm ──────────────────────────────────────────────────────────
+          _sectionHeader('Farm'),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Server Connection',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                  const SizedBox(height: 4),
-                  const Text('URL of your Ranchly backend server.',
+                  TextField(
+                    controller: _farmNameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Farm Name',
+                      hintText: 'e.g. Sunrise Sheep Station',
+                      prefixIcon: Icon(Icons.agriculture_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Weight Unit',
+                    style: TextStyle(fontSize: 13, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'lbs', label: Text('lbs'), icon: Icon(Icons.scale_outlined)),
+                      ButtonSegment(value: 'kg', label: Text('kg'), icon: Icon(Icons.scale_outlined)),
+                    ],
+                    selected: {_weightUnit},
+                    onSelectionChanged: (s) => setState(() => _weightUnit = s.first),
+                    style: ButtonStyle(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // ── Connection ────────────────────────────────────────────────────
+          _sectionHeader('Connection'),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Backend server URL.',
                     style: TextStyle(color: Colors.grey, fontSize: 12)),
                   const SizedBox(height: 12),
                   TextField(
@@ -97,51 +146,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       prefixIcon: Icon(Icons.dns_outlined),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.tonal(
-                      onPressed: _saving ? null : _saveUrl,
-                      child: _saving
-                          ? const SizedBox(height: 18, width: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Text('Save URL'),
-                    ),
-                  ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
 
-          // About
+          // ── Save ──────────────────────────────────────────────────────────
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: _saving ? null : _save,
+              child: _saving
+                  ? const SizedBox(height: 20, width: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('Save Settings'),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // ── About ─────────────────────────────────────────────────────────
+          _sectionHeader('About'),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('About', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                  const SizedBox(height: 8),
-                  const _InfoRow(label: 'App', value: 'Ranchly'),
-                  const _InfoRow(label: 'Version', value: '1.0.0'),
-                  const _InfoRow(label: 'Platform', value: 'Flutter'),
+                  _infoRow('App', 'Ranchly'),
+                  _infoRow('Version', '1.0.0'),
+                  _infoRow('Platform', 'Flutter'),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 12),
 
-          // Actions
+          // ── Danger zone ───────────────────────────────────────────────────
           Card(
             child: Column(
               children: [
-                ListTile(
-                  leading: const Icon(Icons.delete_outline, color: Colors.orange),
-                  title: const Text('Clear Preferences'),
-                  onTap: _clearPrefs,
-                ),
-                const Divider(height: 1),
                 ListTile(
                   leading: const Icon(Icons.logout, color: Colors.red),
                   title: const Text('Sign Out', style: TextStyle(color: Colors.red)),
@@ -150,22 +193,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
+          const SizedBox(height: 24),
         ],
       ),
     );
   }
-}
 
-class _InfoRow extends StatelessWidget {
-  final String label, value;
-  const _InfoRow({required this.label, required this.value});
+  Widget _sectionHeader(String title) => Padding(
+    padding: const EdgeInsets.only(bottom: 8, left: 4),
+    child: Text(title,
+      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+        color: Colors.grey.shade600, letterSpacing: 0.5)),
+  );
 
-  @override
-  Widget build(BuildContext context) => Padding(
+  Widget _infoRow(String label, String value) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 4),
     child: Row(
       children: [
-        SizedBox(width: 80, child: Text(label, style: const TextStyle(color: Colors.grey, fontSize: 13))),
+        SizedBox(width: 80,
+          child: Text(label, style: TextStyle(color: Colors.grey.shade600, fontSize: 13))),
         Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
       ],
     ),

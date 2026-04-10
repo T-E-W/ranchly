@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'animal_detail_screen.dart';
 
 class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key});
@@ -10,8 +11,16 @@ class HealthScreen extends StatefulWidget {
 
 class _HealthScreenState extends State<HealthScreen> {
   List<dynamic> _events = [];
+  List<dynamic> _filtered = [];
   bool _loading = true;
   String? _error;
+  String _search = '';
+  String? _filterType;
+
+  List<String> get _types => _events
+      .map((e) => (e['event_type'] ?? '').toString())
+      .where((s) => s.isNotEmpty)
+      .toSet().toList()..sort();
 
   @override
   void initState() {
@@ -24,18 +33,61 @@ class _HealthScreenState extends State<HealthScreen> {
     try {
       final data = await ApiService.get('/health/events/all') as List<dynamic>;
       if (!mounted) return;
-      setState(() { _events = data; _loading = false; });
+      setState(() {
+        _events = data;
+        _applyFilters();
+        _loading = false;
+      });
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = e.toString(); });
     }
   }
 
+  void _applyFilters() {
+    final q = _search.toLowerCase();
+    _filtered = _events.where((e) {
+      if (q.isNotEmpty) {
+        final tag = (e['animal_tag'] ?? '').toString().toLowerCase();
+        final name = (e['animal_name'] ?? '').toString().toLowerCase();
+        final notes = (e['notes'] ?? '').toString().toLowerCase();
+        if (!tag.contains(q) && !name.contains(q) && !notes.contains(q)) return false;
+      }
+      if (_filterType != null &&
+          (e['event_type'] ?? '').toString().toLowerCase() != _filterType!.toLowerCase()) return false;
+      return true;
+    }).toList();
+  }
+
+  Future<void> _openAnimal(Map<String, dynamic> event) async {
+    final animalId = event['animal_id'];
+    if (animalId == null) return;
+    try {
+      final animal = await ApiService.get('/animals/$animalId') as Map<String, dynamic>;
+      if (!mounted) return;
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => AnimalDetailScreen(animal: animal, onUpdated: _load),
+      ));
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hasFilter = _filterType != null;
+    final title = _loading
+        ? 'Health Log'
+        : 'Health Log (${_filtered.length}${_events.length != _filtered.length ? '/${_events.length}' : ''})';
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Health Log'),
-        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _load)],
+        title: Text(title),
+        actions: [
+          if (hasFilter)
+            IconButton(
+              icon: const Icon(Icons.filter_alt_off),
+              onPressed: () => setState(() { _filterType = null; _applyFilters(); }),
+            ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _load),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         heroTag: 'fab_health',
@@ -44,53 +96,134 @@ class _HealthScreenState extends State<HealthScreen> {
         )),
         child: const Icon(Icons.add),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? _errorView()
-              : _events.isEmpty
-                  ? const Center(child: Text('No health events recorded'))
-                  : RefreshIndicator(
-                      onRefresh: _load,
-                      child: ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
-                        itemCount: _events.length,
-                        itemBuilder: (_, i) => _eventCard(_events[i]),
-                      ),
-                    ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: TextField(
+              decoration: const InputDecoration(
+                hintText: 'Search by tag, animal name, notes...',
+                prefixIcon: Icon(Icons.search),
+                contentPadding: EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+              ),
+              onChanged: (q) => setState(() { _search = q; _applyFilters(); }),
+            ),
+          ),
+          if (!_loading && _types.isNotEmpty) _filterRow(),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? _errorView()
+                    : _filtered.isEmpty
+                        ? Center(child: Text(hasFilter || _search.isNotEmpty
+                            ? 'No events match your filters'
+                            : 'No health events recorded'))
+                        : RefreshIndicator(
+                            onRefresh: _load,
+                            child: ListView.builder(
+                              padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
+                              itemCount: _filtered.length,
+                              itemBuilder: (_, i) => _eventCard(_filtered[i]),
+                            ),
+                          ),
+          ),
+        ],
+      ),
     );
   }
 
+  Widget _filterRow() => SizedBox(
+    height: 42,
+    child: ListView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      children: _types.map((t) {
+        final selected = _filterType == t;
+        final color = _typeColor(t);
+        return Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: FilterChip(
+            label: Text(_capitalize(t)),
+            selected: selected,
+            selectedColor: color.withOpacity(0.2),
+            checkmarkColor: color,
+            labelStyle: TextStyle(
+              fontSize: 12,
+              color: selected ? color : null,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+            ),
+            onSelected: (_) => setState(() {
+              _filterType = selected ? null : t;
+              _applyFilters();
+            }),
+          ),
+        );
+      }).toList(),
+    ),
+  );
+
   Widget _eventCard(Map<String, dynamic> e) {
-    final typeColor = _typeColor(e['event_type'] ?? '');
+    final type = e['event_type'] ?? '';
+    final typeColor = _typeColor(type);
+    final tag = e['animal_tag']?.toString();
+    final name = e['animal_name']?.toString();
+    final animalLabel = name != null && name.isNotEmpty
+        ? '$name ($tag)'
+        : tag != null ? 'Tag $tag' : null;
+    final hasAnimal = e['animal_id'] != null;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
+        onTap: hasAnimal ? () => _openAnimal(e) : null,
         leading: Container(
           width: 40, height: 40,
           decoration: BoxDecoration(
             color: typeColor.withOpacity(0.12),
             borderRadius: BorderRadius.circular(10),
           ),
-          child: Icon(_typeIcon(e['event_type'] ?? ''), color: typeColor, size: 20),
+          child: Icon(_typeIcon(type), color: typeColor, size: 20),
         ),
-        title: Text(
-          _capitalize(e['event_type'] ?? 'Event'),
-          style: const TextStyle(fontWeight: FontWeight.w600),
+        title: Row(
+          children: [
+            Text(_capitalize(type),
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+            if (e['product_name'] != null && e['product_name'].toString().isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text('· ${e['product_name']}',
+                  style: const TextStyle(fontWeight: FontWeight.normal, fontSize: 13, color: Colors.grey),
+                  overflow: TextOverflow.ellipsis),
+              ),
+            ],
+          ],
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (e['animal_tag'] != null) Text('Tag: ${e['animal_tag']}', style: const TextStyle(fontSize: 12)),
+            if (animalLabel != null)
+              Row(children: [
+                const Icon(Icons.pets, size: 11, color: Colors.grey),
+                const SizedBox(width: 3),
+                Text(animalLabel,
+                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                if (hasAnimal)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 2),
+                    child: Icon(Icons.chevron_right, size: 12, color: Colors.grey)),
+              ]),
             if (e['notes'] != null && (e['notes'] as String).isNotEmpty)
-              Text(e['notes'], style: const TextStyle(fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
+              Text(e['notes'], style: const TextStyle(fontSize: 12),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
           ],
         ),
         trailing: Text(
           _formatDate(e['event_date'] ?? e['created_at'] ?? ''),
           style: const TextStyle(fontSize: 11, color: Colors.grey),
         ),
-        isThreeLine: e['notes'] != null && (e['notes'] as String).isNotEmpty,
+        isThreeLine: animalLabel != null &&
+            e['notes'] != null && (e['notes'] as String).isNotEmpty,
       ),
     );
   }
@@ -101,7 +234,8 @@ class _HealthScreenState extends State<HealthScreen> {
       case 'treatment': return Colors.orange;
       case 'checkup': return Colors.green;
       case 'injury': return Colors.red;
-      case 'birth': return Colors.purple;
+      case 'drench': return Colors.purple;
+      case 'birth': return Colors.pink;
       default: return Colors.grey;
     }
   }
@@ -112,6 +246,7 @@ class _HealthScreenState extends State<HealthScreen> {
       case 'treatment': return Icons.medical_services_outlined;
       case 'checkup': return Icons.monitor_heart_outlined;
       case 'injury': return Icons.healing_outlined;
+      case 'drench': return Icons.water_drop_outlined;
       case 'birth': return Icons.child_friendly_outlined;
       default: return Icons.health_and_safety_outlined;
     }
@@ -150,16 +285,15 @@ class HealthEventFormScreen extends StatefulWidget {
 
 class _HealthEventFormScreenState extends State<HealthEventFormScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _tagCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
   final _medicationCtrl = TextEditingController();
   String _eventType = 'checkup';
   DateTime _date = DateTime.now();
   bool _saving = false;
+  Map<String, dynamic>? _selectedAnimal;
 
   List<dynamic> _animals = [];
-
-  final _types = ['checkup', 'vaccination', 'treatment', 'injury', 'birth', 'other'];
+  final _types = ['checkup', 'vaccination', 'treatment', 'drench', 'injury', 'birth', 'other'];
 
   @override
   void initState() {
@@ -171,7 +305,7 @@ class _HealthEventFormScreenState extends State<HealthEventFormScreen> {
 
   @override
   void dispose() {
-    _tagCtrl.dispose(); _notesCtrl.dispose(); _medicationCtrl.dispose();
+    _notesCtrl.dispose(); _medicationCtrl.dispose();
     super.dispose();
   }
 
@@ -188,17 +322,12 @@ class _HealthEventFormScreenState extends State<HealthEventFormScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
-    // Find animal ID from tag
-    final animal = _animals.firstWhere(
-      (a) => a['tag_number'] == _tagCtrl.text.trim(),
-      orElse: () => null,
-    );
     final body = {
       'event_type': _eventType,
       'event_date': _date.toIso8601String().split('T').first,
-      'notes': _notesCtrl.text.trim(),
-      if (animal != null) 'animal_id': animal['id'],
-      if (_medicationCtrl.text.trim().isNotEmpty) 'medication': _medicationCtrl.text.trim(),
+      if (_notesCtrl.text.trim().isNotEmpty) 'notes': _notesCtrl.text.trim(),
+      if (_selectedAnimal != null) 'animal_id': _selectedAnimal!['id'],
+      if (_medicationCtrl.text.trim().isNotEmpty) 'product_name': _medicationCtrl.text.trim(),
     };
     try {
       await ApiService.post('/health/events', body);
@@ -224,22 +353,26 @@ class _HealthEventFormScreenState extends State<HealthEventFormScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // Animal tag autocomplete
-            Autocomplete<String>(
-              optionsBuilder: (v) {
-                if (v.text.isEmpty) return const [];
-                return _animals
-                    .map((a) => a['tag_number'] as String)
-                    .where((t) => t.toLowerCase().contains(v.text.toLowerCase()));
-              },
-              onSelected: (v) => _tagCtrl.text = v,
-              fieldViewBuilder: (_, ctrl, focusNode, __) => TextFormField(
-                controller: ctrl,
-                focusNode: focusNode,
-                decoration: const InputDecoration(labelText: 'Animal Tag *'),
-                validator: (v) => v == null || v.isEmpty ? 'Required' : null,
-                onChanged: (v) => _tagCtrl.text = v,
+            // Animal selector
+            DropdownButtonFormField<Map<String, dynamic>>(
+              value: _selectedAnimal,
+              decoration: const InputDecoration(
+                labelText: 'Animal (optional)',
+                prefixIcon: Icon(Icons.pets_outlined),
               ),
+              items: [
+                const DropdownMenuItem(value: null, child: Text('— No specific animal —')),
+                ..._animals.map((a) {
+                  final tag = a['tag_number']?.toString() ?? '';
+                  final name = a['name']?.toString() ?? '';
+                  final label = name.isNotEmpty ? '$name ($tag)' : tag;
+                  return DropdownMenuItem<Map<String, dynamic>>(
+                    value: a as Map<String, dynamic>,
+                    child: Text(label, overflow: TextOverflow.ellipsis),
+                  );
+                }),
+              ],
+              onChanged: (v) => setState(() => _selectedAnimal = v),
             ),
             const SizedBox(height: 14),
             DropdownButtonFormField<String>(
@@ -261,13 +394,13 @@ class _HealthEventFormScreenState extends State<HealthEventFormScreen> {
             const SizedBox(height: 8),
             TextFormField(
               controller: _medicationCtrl,
-              decoration: const InputDecoration(labelText: 'Medication / Vaccine (optional)'),
+              decoration: const InputDecoration(labelText: 'Product / Vaccine (optional)'),
             ),
             const SizedBox(height: 14),
             TextFormField(
               controller: _notesCtrl,
               maxLines: 4,
-              decoration: const InputDecoration(labelText: 'Notes'),
+              decoration: const InputDecoration(labelText: 'Notes (optional)'),
             ),
             const SizedBox(height: 24),
             FilledButton(
