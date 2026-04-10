@@ -15,6 +15,18 @@ class _AnimalsScreenState extends State<AnimalsScreen> {
   bool _loading = true;
   String? _error;
   String _search = '';
+  String? _filterSpecies;
+  String? _filterStatus;
+
+  List<String> get _species => _animals
+      .map((a) => (a['species'] ?? '').toString())
+      .where((s) => s.isNotEmpty)
+      .toSet().toList()..sort();
+
+  List<String> get _statuses => _animals
+      .map((a) => (a['status'] ?? '').toString())
+      .where((s) => s.isNotEmpty)
+      .toSet().toList()..sort();
 
   @override
   void initState() {
@@ -29,7 +41,7 @@ class _AnimalsScreenState extends State<AnimalsScreen> {
       if (!mounted) return;
       setState(() {
         _animals = data;
-        _filtered = data;
+        _applyFilters();
         _loading = false;
       });
     } catch (e) {
@@ -37,24 +49,46 @@ class _AnimalsScreenState extends State<AnimalsScreen> {
     }
   }
 
-  void _filter(String q) {
-    setState(() {
-      _search = q;
-      _filtered = q.isEmpty
-          ? _animals
-          : _animals.where((a) =>
-              (a['tag_number'] ?? '').toString().toLowerCase().contains(q.toLowerCase()) ||
-              (a['name'] ?? '').toString().toLowerCase().contains(q.toLowerCase()) ||
-              (a['species'] ?? '').toString().toLowerCase().contains(q.toLowerCase())).toList();
-    });
+  void _applyFilters() {
+    final q = _search.toLowerCase();
+    _filtered = _animals.where((a) {
+      if (q.isNotEmpty) {
+        final tag = (a['tag_number'] ?? '').toString().toLowerCase();
+        final name = (a['name'] ?? '').toString().toLowerCase();
+        final species = (a['species'] ?? '').toString().toLowerCase();
+        if (!tag.contains(q) && !name.contains(q) && !species.contains(q)) return false;
+      }
+      if (_filterSpecies != null &&
+          (a['species'] ?? '').toString().toLowerCase() != _filterSpecies!.toLowerCase()) return false;
+      if (_filterStatus != null &&
+          (a['status'] ?? '').toString().toLowerCase() != _filterStatus!.toLowerCase()) return false;
+      return true;
+    }).toList();
   }
+
+  void _filter(String q) => setState(() { _search = q; _applyFilters(); });
 
   @override
   Widget build(BuildContext context) {
+    final hasFilters = _filterSpecies != null || _filterStatus != null;
+    final title = _loading
+        ? 'Animals'
+        : 'Animals (${_filtered.length}${_animals.length != _filtered.length ? '/${_animals.length}' : ''})';
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Animals'),
+        title: Text(title),
         actions: [
+          if (hasFilters)
+            IconButton(
+              icon: const Icon(Icons.filter_alt_off),
+              tooltip: 'Clear filters',
+              onPressed: () => setState(() {
+                _filterSpecies = null;
+                _filterStatus = null;
+                _applyFilters();
+              }),
+            ),
           IconButton(icon: const Icon(Icons.refresh), onPressed: _load),
         ],
       ),
@@ -66,7 +100,7 @@ class _AnimalsScreenState extends State<AnimalsScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
             child: TextField(
               decoration: const InputDecoration(
                 hintText: 'Search by tag, name, species...',
@@ -76,17 +110,20 @@ class _AnimalsScreenState extends State<AnimalsScreen> {
               onChanged: _filter,
             ),
           ),
+          if (!_loading && _animals.isNotEmpty) _filterRow(),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
                     ? _errorView()
                     : _filtered.isEmpty
-                        ? const Center(child: Text('No animals found'))
+                        ? Center(child: Text(hasFilters || _search.isNotEmpty
+                            ? 'No animals match your filters'
+                            : 'No animals found'))
                         : RefreshIndicator(
                             onRefresh: _load,
                             child: ListView.builder(
-                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 80),
+                              padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
                               itemCount: _filtered.length,
                               itemBuilder: (_, i) => _animalCard(_filtered[i]),
                             ),
@@ -96,6 +133,74 @@ class _AnimalsScreenState extends State<AnimalsScreen> {
       ),
     );
   }
+
+  Widget _filterRow() {
+    return SizedBox(
+      height: 42,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        children: [
+          // Status chips
+          ..._statuses.map((s) {
+            final selected = _filterStatus == s;
+            final color = s == 'active' ? Colors.green
+                : s == 'sold' ? Colors.blue
+                : s == 'deceased' ? Colors.red
+                : Colors.grey;
+            return Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: FilterChip(
+                label: Text(_capitalize(s)),
+                selected: selected,
+                selectedColor: color.withOpacity(0.2),
+                checkmarkColor: color,
+                labelStyle: TextStyle(
+                  fontSize: 12,
+                  color: selected ? color : null,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
+                onSelected: (_) => setState(() {
+                  _filterStatus = selected ? null : s;
+                  _applyFilters();
+                }),
+              ),
+            );
+          }),
+          // Divider between status and species
+          if (_statuses.isNotEmpty && _species.isNotEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              child: VerticalDivider(width: 1),
+            ),
+          // Species chips
+          ..._species.map((s) {
+            final selected = _filterSpecies == s;
+            return Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: FilterChip(
+                label: Text(s),
+                selected: selected,
+                selectedColor: const Color(0xFF3a6b35).withOpacity(0.15),
+                checkmarkColor: const Color(0xFF3a6b35),
+                labelStyle: TextStyle(
+                  fontSize: 12,
+                  color: selected ? const Color(0xFF3a6b35) : null,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
+                onSelected: (_) => setState(() {
+                  _filterSpecies = selected ? null : s;
+                  _applyFilters();
+                }),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  String _capitalize(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 
   Widget _animalCard(Map<String, dynamic> a) {
     final statusColor = a['status'] == 'active' ? Colors.green
