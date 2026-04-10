@@ -21,16 +21,19 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
   List<dynamic> _famacha = [];
   List<dynamic> _breeding = [];
   List<dynamic> _shearing = [];
+  List<dynamic> _progeny = [];
   bool _loadingHealth = true;
   bool _loadingWeights = true;
   bool _loadingFamacha = true;
   bool _loadingBreeding = true;
   bool _loadingShearing = true;
+  bool _loadingProgeny = true;
 
   static const _famachaSpecies = {'sheep', 'goat', 'goats', 'sheep/goat'};
   late final bool _showFamacha;
   late final bool _showBreeding;
   late final bool _showShearing;
+  late final bool _showProgeny;
 
   @override
   void initState() {
@@ -41,7 +44,8 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
     _showFamacha = _famachaSpecies.any((s) => species.contains(s));
     _showShearing = species.contains('sheep');
     _showBreeding = sex == 'female' || sex == 'ewe' || sex == 'doe' || sex == 'cow' || sex == 'hen';
-    final tabCount = 3 + (_showFamacha ? 1 : 0) + (_showShearing ? 1 : 0) + (_showBreeding ? 1 : 0);
+    _showProgeny = true; // any animal can have offspring
+    final tabCount = 3 + (_showFamacha ? 1 : 0) + (_showShearing ? 1 : 0) + (_showBreeding ? 1 : 0) + (_showProgeny ? 1 : 0);
     _tabs = TabController(length: tabCount, vsync: this);
     _tabs.addListener(_onTabChange);
     _loadAnimal();
@@ -49,6 +53,7 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
     if (_showFamacha) _loadFamacha();
     if (_showShearing) _loadShearing();
     if (_showBreeding) _loadBreeding();
+    _loadProgeny();
   }
 
   void _onTabChange() {
@@ -87,6 +92,16 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
       if (mounted) setState(() { _weights = data; _loadingWeights = false; });
     } catch (_) {
       if (mounted) setState(() => _loadingWeights = false);
+    }
+  }
+
+  Future<void> _loadProgeny() async {
+    setState(() => _loadingProgeny = true);
+    try {
+      final data = await ApiService.get('/animals/${_animal!['id']}/progeny') as List<dynamic>;
+      if (mounted) setState(() { _progeny = data; _loadingProgeny = false; });
+    } catch (_) {
+      if (mounted) setState(() => _loadingProgeny = false);
     }
   }
 
@@ -159,6 +174,7 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
             if (_showFamacha) Tab(text: 'Famacha (${_famacha.length})'),
             if (_showShearing) Tab(text: 'Shearing (${_shearing.length})'),
             if (_showBreeding) Tab(text: 'Breeding (${_breeding.length})'),
+            if (_showProgeny) Tab(text: 'Progeny (${_progeny.length})'),
           ],
         ),
       ),
@@ -171,6 +187,7 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
           if (_showFamacha) _loadFamacha();
           if (_showShearing) _loadShearing();
           if (_showBreeding) _loadBreeding();
+          _loadProgeny();
           _loadAnimal();
         },
       ),
@@ -187,6 +204,7 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
                 if (_showFamacha) _famachaTab(),
                 if (_showShearing) _shearingTab(),
                 if (_showBreeding) _breedingTab(),
+                if (_showProgeny) _progenyTab(),
               ],
             ),
           ),
@@ -1045,6 +1063,98 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
   }
 
   String _capitalize(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+
+  // ── Progeny Tab ────────────────────────────────────────────────────────────
+
+  Widget _progenyTab() {
+    if (_loadingProgeny) return const Center(child: CircularProgressIndicator());
+    if (_progeny.isEmpty) return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(32),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.family_restroom, size: 48, color: Colors.grey),
+          SizedBox(height: 12),
+          Text('No offspring recorded', style: TextStyle(color: Colors.grey)),
+        ]),
+      ),
+    );
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: _progeny.length,
+      itemBuilder: (_, i) => _progenyCard(_progeny[i] as Map<String, dynamic>),
+    );
+  }
+
+  Widget _progenyCard(Map<String, dynamic> p) {
+    final tag = p['tag_number']?.toString() ?? '?';
+    final name = p['name']?.toString() ?? '';
+    final title = name.isNotEmpty ? '$name ($tag)' : tag;
+    final sex = p['sex']?.toString() ?? '';
+    final dob = p['date_of_birth']?.toString() ?? '';
+    final status = p['status']?.toString() ?? '';
+    final birthType = p['birth_type']?.toString() ?? '';
+    final birthWeight = p['birth_weight_kg'];
+    final role = p['parent_role']?.toString() ?? '';
+
+    final statusColor = status == 'active' ? Colors.green
+        : status == 'sold' ? Colors.blue : Colors.grey;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: const Color(0xFF3a6b35).withOpacity(0.1),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Text(tag.substring(0, tag.length.clamp(0, 4)),
+                style: const TextStyle(color: Color(0xFF3a6b35),
+                  fontWeight: FontWeight.bold, fontSize: 11)),
+            ),
+          ),
+        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${p['breed'] ?? ''} · ${sex.isNotEmpty ? sex : ''}'.trim().replaceAll(RegExp(r'^·\s*|·\s*$'), ''),
+              style: const TextStyle(fontSize: 11)),
+            if (dob.isNotEmpty) Text('Born: $dob', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+            Row(children: [
+              if (birthType.isNotEmpty) _smallBadge(birthType, Colors.blue),
+              if (birthWeight != null) ...[
+                const SizedBox(width: 4),
+                _smallBadge('${birthWeight}kg', Colors.teal),
+              ],
+              if (role == 'sire') ...[
+                const SizedBox(width: 4),
+                _smallBadge('via sire', Colors.purple),
+              ],
+            ]),
+          ],
+        ),
+        trailing: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: statusColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(status, style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w600)),
+        ),
+        isThreeLine: true,
+      ),
+    );
+  }
+
+  Widget _smallBadge(String label, Color color) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+    decoration: BoxDecoration(
+      color: color.withOpacity(0.1),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Text(label, style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w600)),
+  );
 
   // ── Shearing Tab ───────────────────────────────────────────────────────────
 
