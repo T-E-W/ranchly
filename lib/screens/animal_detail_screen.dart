@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import '../services/api_service.dart';
 import 'animals_screen.dart';
 
@@ -390,31 +391,31 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
       itemBuilder: (_, i) {
         final e = _healthEvents[i] as Map<String, dynamic>;
         final id = e['id'];
-        return Dismissible(
+        return Slidable(
           key: ValueKey('health_$id'),
-          direction: DismissDirection.endToStart,
-          background: _deleteBg(),
-          onDismissed: (_) async {
-            setState(() => _healthEvents.removeWhere((x) => (x as Map)['id'] == id));
-            try { await ApiService.delete('/health/events/$id'); }
-            catch (_) { if (mounted) _loadHealth(); }
-          },
+          endActionPane: ActionPane(
+            motion: const DrawerMotion(),
+            extentRatio: 0.18,
+            children: [
+              SlidableAction(
+                onPressed: (_) async {
+                  setState(() => _healthEvents.removeWhere((x) => (x as Map)['id'] == id));
+                  try { await ApiService.delete('/health/events/$id'); }
+                  catch (_) { if (mounted) _loadHealth(); }
+                },
+                backgroundColor: Colors.red.shade400,
+                foregroundColor: Colors.white,
+                icon: Icons.delete_outline,
+                borderRadius: const BorderRadius.horizontal(right: Radius.circular(12)),
+              ),
+            ],
+          ),
           child: _healthCard(e),
         );
       },
     );
   }
 
-  Widget _deleteBg() => Container(
-    alignment: Alignment.centerRight,
-    padding: const EdgeInsets.only(right: 20),
-    margin: const EdgeInsets.only(bottom: 8),
-    decoration: BoxDecoration(
-      color: Colors.red.shade400,
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: const Icon(Icons.delete_outline, color: Colors.white, size: 22),
-  );
 
   Widget _healthCard(Map<String, dynamic> e) {
     final type = e['event_type']?.toString() ?? '';
@@ -525,15 +526,25 @@ class _AnimalDetailScreenState extends State<AnimalDetailScreen>
           ..._weights.map((entry) {
             final w = entry as Map<String, dynamic>;
             final id = w['id'];
-            return Dismissible(
+            return Slidable(
               key: ValueKey('weight_$id'),
-              direction: DismissDirection.endToStart,
-              background: _deleteBg(),
-              onDismissed: (_) async {
-                setState(() => _weights.removeWhere((x) => (x as Map)['id'] == id));
-                try { await ApiService.delete('/health/weights/$id'); }
-                catch (_) { if (mounted) _loadWeights(); }
-              },
+              endActionPane: ActionPane(
+                motion: const DrawerMotion(),
+                extentRatio: 0.18,
+                children: [
+                  SlidableAction(
+                    onPressed: (_) async {
+                      setState(() => _weights.removeWhere((x) => (x as Map)['id'] == id));
+                      try { await ApiService.delete('/health/weights/$id'); }
+                      catch (_) { if (mounted) _loadWeights(); }
+                    },
+                    backgroundColor: Colors.red.shade400,
+                    foregroundColor: Colors.white,
+                    icon: Icons.delete_outline,
+                    borderRadius: const BorderRadius.horizontal(right: Radius.circular(12)),
+                  ),
+                ],
+              ),
               child: Card(
                 margin: const EdgeInsets.only(bottom: 6),
                 child: ListTile(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import '../services/api_service.dart';
 
 class TasksScreen extends StatefulWidget {
@@ -129,20 +130,21 @@ class _TasksScreenState extends State<TasksScreen> with SingleTickerProviderStat
     final done = t['completed'] == true;
     final due = t['due_date'] as String?;
     final isOverdue = !done && due != null && due.compareTo(_todayStr()) < 0;
-    return Dismissible(
+    return Slidable(
       key: ValueKey('task_${t['id']}'),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        margin: const EdgeInsets.only(bottom: 8),
-        decoration: BoxDecoration(
-          color: Colors.red.shade400,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Icon(Icons.delete_outline, color: Colors.white, size: 22),
+      endActionPane: ActionPane(
+        motion: const DrawerMotion(),
+        extentRatio: 0.18,
+        children: [
+          SlidableAction(
+            onPressed: (_) => _delete(t),
+            backgroundColor: Colors.red.shade400,
+            foregroundColor: Colors.white,
+            icon: Icons.delete_outline,
+            borderRadius: const BorderRadius.horizontal(right: Radius.circular(12)),
+          ),
+        ],
       ),
-      onDismissed: (_) => _delete(t),
       child: Card(
         margin: const EdgeInsets.only(bottom: 8),
         child: ListTile(
@@ -240,15 +242,18 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   DateTime? _dueDate;
   bool _saving = false;
 
+  static const _validPriorities = ['low', 'normal', 'medium', 'high'];
+
   @override
   void initState() {
     super.initState();
     final t = widget.task;
     _titleCtrl = TextEditingController(text: t?['title'] ?? '');
     _notesCtrl = TextEditingController(text: t?['notes'] ?? '');
-    _priority = t?['priority'] ?? 'normal';
+    final rawPriority = t?['priority']?.toString() ?? 'normal';
+    _priority = _validPriorities.contains(rawPriority) ? rawPriority : 'normal';
     if (t?['due_date'] != null) {
-      _dueDate = DateTime.tryParse(t!['due_date']);
+      _dueDate = DateTime.tryParse(t!['due_date'].toString());
     }
   }
 
