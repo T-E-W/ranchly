@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'animal_detail_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -12,6 +13,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Map<String, dynamic>? _stats;
   List<dynamic> _alerts = [];
   List<dynamic> _dueTasks = [];
+  Map<String, int> _herd = {};
   bool _loading = true;
   String? _error;
 
@@ -28,6 +30,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ApiService.get('/dashboard/stats'),
         ApiService.get('/dashboard/alerts'),
         ApiService.get('/tasks/'),
+        ApiService.get('/animals/'),
       ]);
       if (!mounted) return;
       final today = _todayStr();
@@ -40,6 +43,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final due = t['due_date'] as String?;
           return due == null || due.compareTo(today) <= 0;
         }).toList();
+        final allAnimals = results[3] is List ? results[3] as List : [];
+        final herd = <String, int>{};
+        for (final a in allAnimals) {
+          if ((a as Map)['status'] != 'active') continue;
+          final s = (a['species'] ?? 'Unknown').toString();
+          herd[s] = (herd[s] ?? 0) + 1;
+        }
+        _herd = Map.fromEntries(
+          herd.entries.toList()..sort((a, b) => b.value.compareTo(a.value)));
         _loading = false;
       });
     } catch (e) {
@@ -82,6 +94,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     padding: const EdgeInsets.all(16),
                     children: [
                       if (_stats != null) _statsGrid(),
+                      if (_herd.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+                        _sectionHeader('Active Herd'),
+                        const SizedBox(height: 8),
+                        _herdCard(),
+                      ],
                       if (_dueTasks.isNotEmpty) ...[
                         const SizedBox(height: 20),
                         Row(
@@ -207,23 +225,91 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _herdCard() {
+    final total = _herd.values.fold(0, (a, b) => a + b);
+    final colors = [
+      const Color(0xFF3a6b35), Colors.blue, Colors.orange,
+      Colors.purple, Colors.teal, Colors.red, Colors.brown,
+    ];
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: _herd.entries.toList().asMap().entries.map((entry) {
+            final i = entry.key;
+            final species = entry.value.key;
+            final count = entry.value.value;
+            final pct = total > 0 ? count / total : 0.0;
+            final color = colors[i % colors.length];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(species, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                      Text('$count  (${(pct * 100).toStringAsFixed(0)}%)',
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: pct,
+                      minHeight: 6,
+                      backgroundColor: Colors.grey.shade200,
+                      valueColor: AlwaysStoppedAnimation(color),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
   Widget _alertCard(dynamic alert) {
     final severity = alert['severity'] ?? 'info';
     final color = severity == 'critical' ? Colors.red
         : severity == 'warning' ? Colors.orange
         : Colors.blue;
+    final hasAnimal = alert['animal_id'] != null;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
-        leading: Icon(Icons.circle, color: color, size: 12),
+        onTap: hasAnimal ? () => _openAnimal(alert['animal_id']) : null,
+        leading: Container(
+          width: 8, height: 8,
+          margin: const EdgeInsets.only(top: 4),
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
         title: Text(alert['message'] ?? '', style: const TextStyle(fontSize: 14)),
         subtitle: alert['animal_tag'] != null
-            ? Text(alert['animal_tag'], style: const TextStyle(fontSize: 12))
+            ? Row(children: [
+                Text(alert['animal_tag'], style: const TextStyle(fontSize: 12)),
+                if (hasAnimal) const Icon(Icons.chevron_right, size: 14, color: Colors.grey),
+              ])
             : null,
       ),
     );
   }
+
+  Future<void> _openAnimal(dynamic animalId) async {
+    try {
+      final animal = await ApiService.get('/animals/$animalId') as Map<String, dynamic>;
+      if (!mounted) return;
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => AnimalDetailScreen(animal: animal, onUpdated: _load),
+      ));
+    } catch (_) {}
+  }
 }
+
 
 class _StatItem {
   final String label, value;

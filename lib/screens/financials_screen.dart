@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import '../services/api_service.dart';
 
 class FinancialsScreen extends StatefulWidget {
@@ -264,48 +265,78 @@ class _FinancialsScreenState extends State<FinancialsScreen>
     final isIncome = type == 'sale';
     final color = isIncome ? Colors.green : Colors.red;
     final amount = (r['amount'] as num?)?.toDouble() ?? 0;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: Container(
-          width: 40, height: 40,
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(10),
+    final id = r['id'];
+    return Slidable(
+      key: ValueKey('fin_$id'),
+      endActionPane: ActionPane(
+        motion: const DrawerMotion(),
+        extentRatio: 0.18,
+        children: [
+          SlidableAction(
+            onPressed: (_) async {
+              setState(() => _records.removeWhere((x) => (x as Map)['id'] == id));
+              try { await ApiService.delete('/financials/$id'); }
+              catch (_) { if (mounted) _loadRecords(); }
+            },
+            backgroundColor: Colors.red.shade400,
+            foregroundColor: Colors.white,
+            icon: Icons.delete_outline,
+            borderRadius: const BorderRadius.horizontal(right: Radius.circular(12)),
           ),
-          child: Icon(isIncome ? Icons.arrow_downward : Icons.arrow_upward,
-            color: color, size: 20),
+        ],
+      ),
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        child: ListTile(
+          onTap: () => _showAddRecord(context, existing: r),
+          leading: Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(isIncome ? Icons.arrow_downward : Icons.arrow_upward,
+              color: color, size: 20),
+          ),
+          title: Text(
+            r['description'] ?? r['category'] ?? _capitalize(type),
+            style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            '${r['record_date'] ?? ''} · ${_capitalize(r['category'] ?? type)}',
+            style: const TextStyle(fontSize: 11)),
+          trailing: Text(
+            '${isIncome ? '+' : '-'}${_fmt(amount)}',
+            style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 14)),
         ),
-        title: Text(
-          r['description'] ?? r['category'] ?? _capitalize(type),
-          style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
-          maxLines: 1, overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text(
-          '${r['record_date'] ?? ''} · ${_capitalize(r['category'] ?? type)}',
-          style: const TextStyle(fontSize: 11)),
-        trailing: Text(
-          '${isIncome ? '+' : '-'}${_fmt(amount)}',
-          style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 14)),
       ),
     );
   }
 
   // ── Add Record Form ────────────────────────────────────────────────────────
 
-  void _showAddRecord(BuildContext context) {
-    String _type = 'expense';
-    String _category = 'feed';
-    DateTime _date = DateTime.now();
-    final _amountCtrl = TextEditingController();
-    final _descCtrl = TextEditingController();
-    final _notesCtrl = TextEditingController();
+  void _showAddRecord(BuildContext context, {Map<String, dynamic>? existing}) {
+    final isEdit = existing != null;
+    String _type = existing?['record_type'] ?? 'expense';
+    String _category = existing?['category'] ?? 'feed';
+    DateTime _date = existing?['record_date'] != null
+        ? DateTime.tryParse(existing!['record_date']) ?? DateTime.now()
+        : DateTime.now();
+    final _amountCtrl = TextEditingController(
+        text: existing?['amount']?.toString() ?? '');
+    final _descCtrl = TextEditingController(
+        text: existing?['description'] ?? '');
+    final _notesCtrl = TextEditingController(
+        text: existing?['notes'] ?? '');
 
     final categories = {
       'expense': ['feed', 'veterinary', 'medication', 'equipment', 'fuel', 'labour', 'other'],
       'sale': ['animal_sale', 'wool', 'meat', 'dairy', 'other'],
       'purchase': ['animal_purchase', 'equipment', 'land', 'other'],
     };
+    // Ensure category is valid for the current type
+    if (!categories[_type]!.contains(_category)) _category = categories[_type]!.first;
 
     showModalBottomSheet(
       context: context,
@@ -323,8 +354,8 @@ class _FinancialsScreenState extends State<FinancialsScreen>
                 decoration: BoxDecoration(color: Colors.grey.shade300,
                   borderRadius: BorderRadius.circular(2)))),
               const SizedBox(height: 16),
-              const Text('Add Transaction',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text(isEdit ? 'Edit Transaction' : 'Add Transaction',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 14),
               // Type selector
               Row(children: ['expense', 'sale', 'purchase'].map((t) {
@@ -392,23 +423,28 @@ class _FinancialsScreenState extends State<FinancialsScreen>
                     if (_amountCtrl.text.isEmpty) return;
                     final fmt = (DateTime d) =>
                       '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
+                    final body = {
+                      'record_type': _type,
+                      'record_date': fmt(_date),
+                      'amount': double.parse(_amountCtrl.text.replaceAll(',', '')),
+                      'category': _category,
+                      if (_descCtrl.text.isNotEmpty) 'description': _descCtrl.text.trim(),
+                      if (_notesCtrl.text.isNotEmpty) 'notes': _notesCtrl.text.trim(),
+                      'source': 'manual',
+                    };
                     try {
-                      await ApiService.post('/financials/', {
-                        'record_type': _type,
-                        'record_date': fmt(_date),
-                        'amount': double.parse(_amountCtrl.text.replaceAll(',', '')),
-                        'category': _category,
-                        if (_descCtrl.text.isNotEmpty) 'description': _descCtrl.text.trim(),
-                        if (_notesCtrl.text.isNotEmpty) 'notes': _notesCtrl.text.trim(),
-                        'source': 'manual',
-                      });
+                      if (isEdit) {
+                        await ApiService.put('/financials/${existing!['id']}', body);
+                      } else {
+                        await ApiService.post('/financials/', body);
+                      }
                       if (mounted) { Navigator.pop(ctx); _refresh(); }
                     } catch (e) {
                       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
                     }
                   },
-                  child: const Text('Save'),
+                  child: Text(isEdit ? 'Save Changes' : 'Save'),
                 )),
             ],
           ),
