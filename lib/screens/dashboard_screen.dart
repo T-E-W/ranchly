@@ -283,10 +283,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
         onTap: hasAnimal ? () => _openAnimal(alert['animal_id']) : null,
-        leading: Container(
-          width: 8, height: 8,
-          margin: const EdgeInsets.only(top: 4),
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        leading: CircleAvatar(
+          radius: 18,
+          backgroundColor: color.withOpacity(0.12),
+          child: Icon(
+            severity == 'critical' ? Icons.warning_rounded
+                : severity == 'warning' ? Icons.info_outline
+                : Icons.notifications_none,
+            color: color, size: 18),
         ),
         title: Text(alert['message'] ?? '', style: const TextStyle(fontSize: 14)),
         subtitle: alert['animal_tag'] != null
